@@ -106,6 +106,217 @@ function NaurOLED.Decorate(window, library)
 end
 
 -- Personalização aplicada ao ambiente desta cópia.
+-- Organização e apresentação dos controles. Não altera IDs, valores nem callbacks.
+local NaurControls = { tabs = {}, groups = {}, controls = {}, originalToggle = setmetatable({}, {__mode="k"}) }
+local tabInfo = {
+    Home={"Início", "Sessão, atalhos e novidades", 0},
+    Main={"Automação", "Rotinas e recursos", 2},
+    PvP={"Combate", "Alvos e configurações", 3}, Players={"Combate", "Alvos e configurações", 3},
+    ["Skins & Passes"]={"Aparência", "Skins e passes", 4}, Skins={"Aparência", "Skins e passes", 4},
+    Misc={"Utilitários", "Servidores e desempenho", 5}, Miscellaneous={"Utilitários", "Servidores e desempenho", 5},
+    Webhook={"Registros", "Registros opcionais de progresso", 6},
+    Config={"Preferências", "Interface, atalhos e perfis", 7}, Settings={"Preferências", "Interface, atalhos e perfis", 7},
+}
+local groupText = {
+    Main="Sessão", ["Local Player"]="Personagem", ["Auto Farm"]="Rotinas",
+    Gamepasses="Recursos", Hitbox="Área de interação", Extra="Comportamento",
+    ["Update Logs"]="O que mudou", Auras="Configurações de combate", Events="Eventos",
+    Exploits="Ferramentas avançadas", Servers="Conexão", Performance="Desempenho",
+    Logging="Registro de progresso", Menu="Interface", ["Auto Reconnect"]="Reconexão",
+}
+local labels = {
+    WSToggle="Velocidade personalizada", WSSlider="Velocidade",
+    JPToggle="Pulo personalizado", JPSlider="Força do pulo",
+    AutoDummyToggle="Treinar em alvo de prática", ConstantTPToggle="Acompanhar alvo de prática",
+    NoFireFXToggle="Ocultar efeitos de fogo", BossSelection="Chefes selecionados",
+    AutoBossToggle="Rotina para chefes selecionados", AutoAllBossesToggle="Rotina para todos os chefes",
+    NoRewardToggle="Ocultar aviso de experiência", AutoCoinsToggle="Coletar moedas",
+    FreeFireToggle="Bola de fogo", FreeLightningToggle="Raio", FreeRadioToggle="Rádio",
+    HitboxSize="Tamanho da área", HitboxTransparency="Transparência", HitboxShape="Formato da área",
+    HitboxMaterial="Material", HitboxToggle="Exibir prévia", AutoEatToggle="Alimentação automática",
+    AutoRespawnToggle="Reaparecer automaticamente", HealthPercentage="Limite de vida",
+    PlayerSelection="Jogador-alvo", PlayerSelection2="Jogador-alvo",
+    LoopDamageToggle="Ação contínua no alvo", LoopTeleportToggle="Acompanhar jogador-alvo",
+    ViewToggle="Observar jogador-alvo", KillAuraToggle="Ativar ação de proximidade",
+    FireAuraToggle="Ativar ação de fogo", FireAuraDistance="Distância", FireAuraCooldown="Intervalo",
+    HiddenWeapons="Itens ocultos", NoRenderToggle="Ocultar renderização 3D",
+    ShowFPSToggle="Mostrar FPS", ShowPingToggle="Mostrar latência", DisplayToggle="Mostrar monitor",
+    AutoReconnectToggle="Reconectar automaticamente", ExecuteOnReconnectToggle="Executar após reconectar",
+    WebhookSelection="Endereço do registro opcional", LevelWebhookToggle="Registrar evolução de nível",
+    AutoSaveToggle="Salvar preferências automaticamente", NotificationSide="Posição dos avisos",
+    DPIDropdown="Escala da interface", MenuKeybind="Atalho do painel", JobIdInput="Identificador do servidor",
+}
+local actionLabels = {
+    ["Discord Link"]="Comunidade no Discord", Rejoin="Reconectar ao servidor", ["Server Hop"]="Buscar outro servidor",
+    Reset="Reiniciar personagem", ["TP to Player"]="Ir até o jogador-alvo", ["View Player"]="Observar jogador-alvo",
+    ["Join server"]="Entrar no servidor", ["Copy server JobId"]="Copiar identificador do servidor",
+    ["Get JobId"]="Usar servidor atual", ["Start logs"]="Iniciar registro opcional", ["Unload Naur Hub"]="Fechar Naur Hub",
+}
+local order = {
+    WSToggle=10,WSSlider=20,JPToggle=10,JPSlider=20,
+    PlayerSelection=10,PlayerSelection2=10, BossSelection=10,AutoBossToggle=20,AutoAllBossesToggle=30,
+    FireAuraToggle=10,FireAuraDistance=20,FireAuraCooldown=30,
+    HitboxToggle=10,HitboxShape=20,HitboxSize=30,HitboxTransparency=40,HitboxMaterial=50,
+    AutoRespawnToggle=10,HealthPercentage=20,WebhookSelection=10,LevelWebhookToggle=20,
+    DisplayToggle=10,ShowFPSToggle=20,ShowPingToggle=30,NoRenderToggle=40,
+}
+local function corner(parent, radius)
+    local existing=parent:FindFirstChildOfClass("UICorner")
+    if not existing then existing=Instance.new("UICorner") existing.Parent=parent end
+    existing.CornerRadius=UDim.new(0,radius)
+end
+local function resize(control)
+    local parent=control and control.Parent
+    if parent and type(parent.Resize)=="function" then parent:Resize() end
+end
+function NaurControls.Window(window)
+    NaurControls.window=window
+end
+function NaurControls.TabOptions(packed)
+    local raw=type(packed[1])=="table" and packed[1].Name or packed[1]
+    local info=tabInfo[raw]
+    if not info then return packed,raw end
+    local spec=type(packed[1])=="table" and table.clone(packed[1]) or {Name=raw,Icon=packed[2]}
+    spec.Name,spec.Description,spec.Order=info[1],info[2],info[3]
+    packed=table.pack(spec)
+    return packed,raw
+end
+function NaurControls.RegisterTab(name,tab)
+    if name then NaurControls.tabs[name]=tab end
+end
+function NaurControls.GroupTarget(owner, method, packed)
+    local name=method=="AddGroupbox" and type(packed[1])=="table" and packed[1].Name or packed[1]
+    if name=="Local Player" and NaurControls.window then
+        if not NaurControls.tabs.Character then
+            NaurControls.tabs.Character=NaurControls.window:AddTab({Name="Personagem",Icon="user-round",Description="Movimento e personagem",Order=1})
+        end
+        local target=NaurControls.tabs.Character
+        if target and target~=owner then return target,packed,name end
+    elseif name=="Update Logs" then
+        -- O histórico continua disponível, mas não ocupa a página inicial inteira.
+        if method=="AddGroupbox" then packed[1]=table.clone(packed[1]) packed[1].Collapsed=true
+        else packed[4]=true packed.n=math.max(packed.n,4) end
+    end
+    return owner,packed,name
+end
+function NaurControls.RegisterGroup(name,group)
+    if type(group)~="table" then return end
+    NaurControls.groups[group]=name
+    if group.Holder and groupText[name] then
+        for _,child in ipairs(group.Holder:GetDescendants()) do
+            if child:IsA("TextLabel") and child.Text==name then child.Text=groupText[name] break end
+        end
+    end
+    if group.Container then
+        local layout=group.Container:FindFirstChildOfClass("UIListLayout")
+        if layout then layout.Padding=UDim.new(0,12) layout.SortOrder=Enum.SortOrder.LayoutOrder end
+        if layout and not group.__naurLayoutWatched then
+            group.__naurLayoutWatched=true
+            local connection=layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+                if not group.Destroyed and type(group.Resize)=="function" then group:Resize() end
+            end)
+            if group.Connections then table.insert(group.Connections,connection) end
+        end
+        local padding=group.Container:FindFirstChildOfClass("UIPadding")
+        if padding then
+            padding.PaddingLeft=UDim.new(0,12) padding.PaddingRight=UDim.new(0,12)
+            padding.PaddingTop=UDim.new(0,10) padding.PaddingBottom=UDim.new(0,12)
+        end
+    end
+    if name=="Update Logs" and type(group.SetCollapsed)=="function" then group:SetCollapsed(true) end
+end
+local function movementGroup(name,side)
+    local tab=NaurControls.tabs.Character
+    if not tab then return end
+    NaurControls.movement=NaurControls.movement or {}
+    if not NaurControls.movement[name] then
+        NaurControls.movement[name]=tab:AddGroupbox({Name=name,Side=side,IconName=side==1 and "footprints" or "arrow-up-from-line",Description="Ative a opção e ajuste a intensidade abaixo."})
+    end
+    return NaurControls.movement[name]
+end
+function NaurControls.ControlTarget(owner,id)
+    if NaurControls.groups[owner]=="Local Player" then
+        if id=="WSToggle" or id=="WSSlider" then return movementGroup("Velocidade",1) or owner end
+        if id=="JPToggle" or id=="JPSlider" then return movementGroup("Pulo",2) or owner end
+    end
+    return owner
+end
+function NaurControls.Info(method,id,info)
+    local value=table.clone(type(info)=="table" and info or {})
+    if labels[id] then value.Text=labels[id] end
+    if method=="AddSlider" then
+        value.Compact=false value.HideMax=true
+        if value.Tooltip==nil then value.Tooltip="Arraste para ajustar. Clique com o botão direito no valor para digitá-lo." end
+    elseif method=="AddDropdown" then
+        value.MaxVisibleDropdownItems=7
+        if value.Tooltip==nil then value.Tooltip=value.Multi and "Você pode selecionar mais de uma opção." or "Abra a lista e escolha uma opção." end
+    end
+    return value
+end
+function NaurControls.ButtonArgs(packed)
+    -- O texto original também pode ser a chave de Buttons; traduzir só a apresentação.
+    return packed
+end
+function NaurControls.Style(control,id,method)
+    if type(control)~="table" then return end
+    if id then NaurControls.controls[id]=control end
+    local holder=control.Holder
+    if not holder then return end
+    if order[id] then holder.LayoutOrder=order[id] end
+    if method=="AddToggle" or method=="AddCheckbox" then
+        holder.Size=UDim2.new(1,0,0,32)
+        for _,child in ipairs(holder:GetChildren()) do
+            if child:IsA("TextLabel") then child.TextSize=13 child.Size=UDim2.new(1,-52,1,0)
+            elseif child:IsA("Frame") and child:FindFirstChildOfClass("UICorner") then
+                child.AnchorPoint=Vector2.new(1,0.5) child.Position=UDim2.fromScale(1,0.5) child.Size=UDim2.fromOffset(38,22)
+            end
+        end
+    elseif method=="AddSlider" then
+        holder.Size=UDim2.new(1,0,0,50)
+        local bar
+        for _,child in ipairs(holder:GetChildren()) do
+            if child:IsA("TextButton") then bar=child
+            elseif child:IsA("TextLabel") then child.TextSize=13 child.TextTransparency=0.25 child.Size=UDim2.new(1,-100,0,16) end
+        end
+        if bar then
+            bar.Size=UDim2.new(1,0,0,30) bar.BackgroundTransparency=1
+            local fill
+            for _,child in ipairs(bar:GetChildren()) do
+                if child:IsA("UIStroke") then child.Transparency=1
+                elseif child:IsA("Frame") then fill=child
+                elseif child:IsA("TextLabel") then
+                    child.AnchorPoint=Vector2.new(1,0) child.Position=UDim2.new(1,0,0,-20)
+                    child.Size=UDim2.fromOffset(92,16) child.TextXAlignment=Enum.TextXAlignment.Right child.TextSize=13
+                    for _,stroke in ipairs(child:GetChildren()) do if stroke:IsA("UIStroke") then stroke.Transparency=1 end end
+                end
+            end
+            local track=Instance.new("Frame") track.Name="NaurTrack" track.BorderSizePixel=0
+            track.BackgroundColor3=Color3.fromRGB(36,38,44) track.AnchorPoint=Vector2.new(0,0.5)
+            track.Position=UDim2.fromScale(0,0.5) track.Size=UDim2.new(1,0,0,4) track.ZIndex=bar.ZIndex track.Parent=bar corner(track,2)
+            local knob=Instance.new("Frame") knob.BorderSizePixel=0 knob.BackgroundColor3=NaurOLED.Palette.AccentColor
+            knob.AnchorPoint=Vector2.new(0.5,0.5) knob.Size=UDim2.fromOffset(10,10) knob.ZIndex=bar.ZIndex+2 knob.Parent=bar corner(knob,5)
+            local display=control.Display
+            local function paint()
+                local scale=(control.Value-control.Min)/math.max(1,control.Max-control.Min)
+                if fill then fill.AnchorPoint=Vector2.new(0,0.5) fill.Position=UDim2.fromScale(0,0.5) fill.Size=UDim2.new(scale,0,0,4) end
+                knob.Position=UDim2.fromScale(scale,0.5)
+            end
+            if type(display)=="function" then control.Display=function(self,...) local result=display(self,...) paint() return result end end
+            paint()
+        end
+    elseif method=="AddDropdown" or method=="AddInput" then
+        holder.Size=UDim2.new(1,0,0,58)
+        for _,child in ipairs(holder:GetChildren()) do
+            if child:IsA("TextButton") or child:IsA("TextBox") then child.Size=UDim2.new(1,0,0,34) corner(child,8)
+            elseif child:IsA("TextLabel") then child.TextSize=13 child.TextTransparency=0.25 end
+        end
+    elseif method=="AddButton" then
+        holder.Size=UDim2.new(1,0,0,34)
+        if control.Base then control.Base.Text=actionLabels[control.Text] or control.Text control.Base.TextSize=13 control.Base.TextXAlignment=Enum.TextXAlignment.Center corner(control.Base,8) end
+    end
+    resize(control)
+end
+
 local function makeNaurEnvironment(base)
     local environment = setmetatable({}, { __index = base, __newindex = base })
     local visited = setmetatable({}, { __mode = "k" })
@@ -135,15 +346,35 @@ local function makeNaurEnvironment(base)
         visited[object] = true
         if type(object.CreateWindow) == "function" and type(object.Scheme) == "table" then
             activeLibrary = object
+            object.ForceCheckbox = false
             object.Toggles = object.Toggles or {}
             object.Toggles.AutoClanToggle = disabledToggle
             applyPalette(object)
         end
-        if type(object.AddToggle) == "function" then
-            local addToggle = object.AddToggle
-            object.AddToggle = function(self, id, ...)
-                if id == "AutoClanToggle" then return disabledToggle end
-                return addToggle(self, id, ...)
+
+        local originalToggle=object.AddToggle
+        for _, method in ipairs({"AddToggle","AddCheckbox","AddSlider","AddDropdown","AddInput"}) do
+            local original=method=="AddCheckbox" and originalToggle or object[method]
+            if type(original)=="function" then
+                object[method]=function(self,id,info,...)
+                    if id=="AutoClanToggle" then return disabledToggle end
+                    local target=NaurControls.ControlTarget(self,id)
+                    if target~=self then return target[method](target,id,info,...) end
+                    local prepared=NaurControls.Info(method,id,info)
+                    local control=original(self,id,prepared,...)
+                    if type(control)=="table" then control.Parent=control.Parent or self end
+                    NaurControls.Style(control,id,method)
+                    return control
+                end
+            end
+        end
+        if type(object.AddButton)=="function" then
+            local addButton=object.AddButton
+            object.AddButton=function(self,...)
+                local args=NaurControls.ButtonArgs(table.pack(...))
+                local control=addButton(self,table.unpack(args,1,args.n))
+                NaurControls.Style(control,nil,"AddButton")
+                return control
             end
         end
         if type(object.BuiltInThemes) == "table" and type(object.SetLibrary) == "function" then
@@ -167,11 +398,30 @@ local function makeNaurEnvironment(base)
             if type(original) == "function" then
                 object[method] = function(self, ...)
                     local args = NaurOLED.Options(method, table.pack(...))
+                    local originalTabName, originalGroupName
+                    if method=="AddTab" and self==NaurControls.window then
+                        args, originalTabName=NaurControls.TabOptions(args)
+                    elseif method=="AddGroupbox" or method=="AddLeftGroupbox" or method=="AddRightGroupbox" then
+                        local target
+                        target,args,originalGroupName=NaurControls.GroupTarget(self,method,args)
+                        if target~=self then
+                            local result=target[method](target,table.unpack(args,1,args.n))
+                            if self.Groupboxes and originalGroupName then self.Groupboxes[originalGroupName]=result end
+                            return result
+                        end
+                    end
                     local results = table.pack(original(self, table.unpack(args, 1, args.n)))
                     for index = 1, results.n do
                         local result = results[index]
                         wrap(result)
-                        if method == "CreateWindow" then NaurOLED.Decorate(result, activeLibrary) end
+                        if method == "CreateWindow" then
+                            NaurOLED.Decorate(result, activeLibrary)
+                            NaurControls.Window(result)
+                        elseif method == "AddTab" then
+                            NaurControls.RegisterTab(originalTabName,result)
+                        elseif originalGroupName then
+                            NaurControls.RegisterGroup(originalGroupName,result)
+                        end
                         if method == "AddTabs" and type(result) == "table" then
                             for _, tab in pairs(result) do wrap(tab) end
                         end
