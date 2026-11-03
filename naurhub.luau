@@ -1,3 +1,221 @@
+-- Recursos locais de sessão. Não envia dados nem altera intervalos de ações do jogo.
+local NaurSession={attached=setmetatable({}, {__mode="k"})}
+local automationIds={"AutoDummyToggle","ConstantTPToggle","AutoCoinsToggle","AutoBossToggle","AutoAllBossesToggle","AutoEatToggle","AutoRespawnToggle","LoopDamageToggle","LoopTeleportToggle","ViewToggle","KillAuraToggle","FireAuraToggle","GiftPlayerToggle","GiftServerToggle","AutoReconnectToggle","ExecuteOnReconnectToggle"}
+function NaurSession.DisableAutomations(toggles)
+    local changed,failed=0,0
+    for _,id in ipairs(automationIds) do
+        local option=toggles and toggles[id]
+        if option and option.Value==true and type(option.SetValue)=="function" then
+            local ok=pcall(option.SetValue,option,false)
+            if ok and option.Value==false then changed+=1 else failed+=1 end
+        end
+    end
+    return changed,failed
+end
+function NaurSession.Duration(seconds)
+    seconds=math.max(0,math.floor(seconds))
+    return string.format("%02d:%02d:%02d",math.floor(seconds/3600),math.floor(seconds/60)%60,seconds%60)
+end
+function NaurSession.Sampler()
+    local s={elapsed=0,frames=0,maxFrame=0,slowFrames=0}
+    function s:Reset() self.elapsed,self.frames,self.maxFrame,self.slowFrames=0,0,0,0 end
+    function s:Push(dt)
+        if type(dt)~="number" or dt<=0 or dt~=dt or dt==math.huge then return end
+        self.elapsed+=dt self.frames+=1 self.maxFrame=math.max(self.maxFrame,dt)
+        if dt>0.05 then self.slowFrames+=1 end
+        if self.elapsed<1 then return end
+        local result={fps=math.floor(self.frames/self.elapsed+0.5),averageMs=self.elapsed*1000/self.frames,peakMs=self.maxFrame*1000,slowFrames=self.slowFrames}
+        self:Reset()
+        return result
+    end
+    return s
+end
+function NaurSession.Attach(tab,library,base)
+    if type(tab)~="table" or NaurSession.attached[tab] then return end
+    NaurSession.attached[tab]=true
+    local quick=tab:AddLeftGroupbox("Controle rápido","circle-pause")
+    local quickStatus=quick:AddLabel("Desligue as rotinas sem alterar suas preferências visuais.",true)
+    quick:AddButton({Text="Desativar automações",Tooltip="Desativa rotinas de jogo, observação e reconexão. Não reativa nenhuma opção.",Func=function()
+        local changed,failed=NaurSession.DisableAutomations(library.Toggles)
+        local text=string.format("%d opções desligadas. As ações em andamento podem terminar.",changed)
+        if failed>0 then text=text.." Falhas: "..failed end
+        if quickStatus and type(quickStatus.SetText)=="function" then quickStatus:SetText(text) end
+        if type(library.Notify)=="function" then library:Notify(text) end
+    end})
+    local monitor=tab:AddRightGroupbox("Monitor de sessão","activity")
+    local summary=monitor:AddLabel("Monitor desligado. Ative para medir esta sessão.",true)
+    local details=monitor:AddLabel("As medidas não são enviadas para nenhum serviço.",true)
+    local sampler=NaurSession.Sampler()
+    local started=os.clock()
+    local connection
+    local function setText(label,text)
+        if label and type(label.SetText)=="function" then label:SetText(text) end
+    end
+    local function stop()
+        if connection then connection:Disconnect() connection=nil end
+        sampler:Reset()
+    end
+    monitor:AddToggle("NaurSessionMonitor",{Text="Mostrar métricas da sessão",Default=false,Tooltip="Atualiza o painel aproximadamente uma vez por segundo; desligado, não mede os quadros.",Callback=function(enabled)
+        stop()
+        if not enabled then setText(summary,"Monitor desligado.") return end
+        local ok,runService=pcall(function()return (base.game or game):GetService("RunService")end)
+        if not ok or not runService then setText(summary,"Não foi possível iniciar o monitor.") return end
+        local player
+        pcall(function()player=(base.game or game):GetService("Players").LocalPlayer end)
+        connection=runService.RenderStepped:Connect(function(dt)
+            if library.Unloaded then stop() return end
+            local metrics=sampler:Push(dt)
+            if not metrics then return end
+            local ping="indisponível"
+            if player and type(player.GetNetworkPing)=="function" then
+                local got,value=pcall(player.GetNetworkPing,player)
+                if got and type(value)=="number" then ping=string.format("%.0f ms",value*1000) end
+            end
+            setText(summary,string.format("FPS: %d  |  latência informada: %s\nSessão: %s",metrics.fps,ping,NaurSession.Duration(os.clock()-started)))
+            setText(details,string.format("Quadro médio: %.1f ms\nMaior quadro na amostra: %.1f ms\nQuadros acima de 50 ms: %d",metrics.averageMs,metrics.peakMs,metrics.slowFrames))
+        end)
+        if type(library.GiveSignal)=="function" then library:GiveSignal(connection) end
+    end})
+    monitor:AddButton({Text="Zerar amostra de desempenho",Func=function()sampler:Reset()setText(details,"Aguardando a próxima amostra do monitor.")end})
+end
+
+-- Limite de FPS: alteração somente por escolha explícita, quando o executor oferece a API.
+local NaurFPS = { added = setmetatable({}, {__mode="k"}) }
+function NaurFPS.Controller(base)
+    local setter=base.setfpscap or base.set_fps_cap
+    local getter=base.getfpscap
+    local initial
+    if type(getter)=="function" then
+        local ok,value=pcall(getter)
+        if ok and type(value)=="number" and value>=0 and value<math.huge then initial=value end
+    end
+    local controller={supported=type(setter)=="function",initial=initial}
+    function controller:Apply(limit)
+        if not self.supported then return false,"Este executor não oferece controle de limite de FPS." end
+        if type(limit)~="number" or limit<0 or limit>1000 or limit~=limit then return false,"Limite inválido." end
+        local ok,result=pcall(setter,limit)
+        if not ok or result==false then return false,"O executor recusou a alteração do limite." end
+        return true
+    end
+    return controller
+end
+function NaurFPS.Attach(group,library,base)
+    if type(group)~="table" or NaurFPS.added[group] then return end
+    NaurFPS.added[group]=true
+    local control=NaurFPS.Controller(base)
+    group:AddLabel("LIMITE DE FPS",false)
+    local status=group:AddLabel(control.supported and "Escolha um limite. A máquina pode entregar menos FPS." or "Controle indisponível neste executor.",true)
+    local function message(text)
+        if status and type(status.SetText)=="function" then status:SetText(text) end
+        if library and type(library.Notify)=="function" then library:Notify(text) end
+    end
+    local limits={ ["60 FPS"]=60,["120 FPS"]=120,["144 FPS"]=144,["165 FPS"]=165,["240 FPS"]=240,["360 FPS"]=360,["480 FPS"]=480,["Sem limite (se compatível)"]=0 }
+    local dropdown=group:AddDropdown("NaurFPSCap",{
+        Text="Limite desejado",Values={"Sem alteração","60 FPS","120 FPS","144 FPS","165 FPS","240 FPS","360 FPS","480 FPS","Sem limite (se compatível)"},
+        Default="Sem alteração",Multi=false,Disabled=not control.supported,
+        Tooltip="Não aumenta a potência da máquina. Limites acima de 240 e modo sem limite dependem do executor e do cliente.",
+        Callback=function(choice)
+            if choice=="Sem alteração" then return end
+            local value=limits[choice]
+            if value==nil then return end
+            local ok,err=control:Apply(value)
+            if not ok then message(err) return end
+            message(value==0 and "Remoção do limite solicitada. Confira o FPS real no monitor." or "Limite solicitado: "..value.." FPS. Confira o FPS real no monitor.")
+        end,
+    })
+    local restore=control.initial or 240
+    group:AddButton({Text=control.initial and "Restaurar limite inicial" or "Aplicar limite de 240 FPS",Disabled=not control.supported,Func=function()
+        if dropdown and type(dropdown.SetValue)=="function" then dropdown:SetValue("Sem alteração") end
+        local ok,err=control:Apply(restore)
+        message(ok and (restore==0 and "Modo inicial sem limite solicitado." or "Limite solicitado: "..restore.." FPS.") or err)
+    end})
+    if type(group.Resize)=="function" then group:Resize() end
+end
+
+-- A coluna controla a rolagem; cartões expandidos não capturam a roda do mouse.
+local NaurScroll = { watched = setmetatable({}, {__mode="k"}) }
+function NaurScroll.Height(contentPixels,scale,top,bottom)
+    return math.ceil(contentPixels/math.max(0.01,tonumber(scale) or 1)+(top or 0)+(bottom or 0)+24)
+end
+local function keep(connection,owner,library)
+    if owner and type(owner.Connections)=="table" then table.insert(owner.Connections,connection)
+    elseif library and type(library.GiveSignal)=="function" then library:GiveSignal(connection) end
+end
+function NaurScroll.Column(frame,owner,library)
+    if not frame or not frame:IsA("ScrollingFrame") or NaurScroll.watched[frame] then return end
+    local layout=frame:FindFirstChildOfClass("UIListLayout")
+    if not layout then return end
+    NaurScroll.watched[frame]=true
+    frame.AutomaticCanvasSize=Enum.AutomaticSize.None
+    frame.ScrollingEnabled=true
+    frame.Active=true
+    frame.ScrollingDirection=Enum.ScrollingDirection.Y
+    frame.ElasticBehavior=Enum.ElasticBehavior.Never
+    frame.ScrollBarThickness=4
+    frame.ScrollBarImageTransparency=0.35
+    local pending=false
+    local function refresh()
+        pending=false
+        if not frame.Parent or (owner and owner.Destroyed) then return end
+        local padding=frame:FindFirstChildOfClass("UIPadding")
+        local top=padding and padding.PaddingTop.Offset or 0
+        local bottom=padding and padding.PaddingBottom.Offset or 0
+        if layout.AbsoluteContentSize.Y<=0 then return end
+        local height=NaurScroll.Height(layout.AbsoluteContentSize.Y,library and library.DPIScale,top,bottom)
+        if math.abs(frame.CanvasSize.Y.Offset-height)>1 or frame.CanvasSize.Y.Scale~=0 then
+            frame.CanvasSize=UDim2.fromOffset(0,height)
+        end
+        -- Não reatribuir CanvasPosition: a posição escolhida pelo usuário é preservada.
+    end
+    local function schedule()
+        if pending then return end
+        pending=true
+        task.defer(refresh)
+    end
+    keep(layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(schedule),owner,library)
+    keep(frame:GetPropertyChangedSignal("AbsoluteSize"):Connect(schedule),owner,library)
+    keep(frame:GetPropertyChangedSignal("Visible"):Connect(schedule),owner,library)
+    schedule()
+end
+function NaurScroll.Tab(tab,library)
+    if type(tab)~="table" then return end
+    if type(tab.Sides)=="table" then
+        for _,side in pairs(tab.Sides) do NaurScroll.Column(side,tab,library) end
+    elseif tab.Container and tab.Container:IsA("ScrollingFrame") then
+        NaurScroll.Column(tab.Container,tab,library)
+    end
+end
+function NaurScroll.Window(library)
+    if library and type(library.Animations)=="table" then library.Animations.Groupbox=false end
+end
+function NaurScroll.Group(group,library)
+    if type(group)~="table" or not group.Container then return end
+    local padding=group.Container:FindFirstChildOfClass("UIPadding")
+    if padding then
+        -- Groupbox:Resize soma 14 px no código da biblioteca (7 acima + 7 abaixo).
+        padding.PaddingTop=UDim.new(0,7)
+        padding.PaddingBottom=UDim.new(0,7)
+    end
+    if group.__naurScrollFixed then return end
+    group.__naurScrollFixed=true
+    local original=group.Resize
+    if type(original)~="function" then return end
+    group.Resize=function(self,...)
+        local values=table.pack(original(self,...))
+        if self.Container:IsA("ScrollingFrame") then
+            local popped=self.PoppedOut==true
+            self.Container.ScrollingEnabled=popped
+            self.Container.Active=popped
+            self.Container.ElasticBehavior=Enum.ElasticBehavior.Never
+            self.Container.AutomaticCanvasSize=popped and Enum.AutomaticSize.Y or Enum.AutomaticSize.None
+            if not popped then self.Container.CanvasSize=UDim2.fromOffset(0,0) end
+        end
+        return table.unpack(values,1,values.n)
+    end
+    group:Resize()
+    NaurScroll.Tab(group.Tab,library)
+end
+
 -- Naur Hub compacto: carga original preservada; personalizacao aplicada apos decodificar.
 -- Camada visual OLED: usa componentes nativos, sem baixar uma imagem para o logotipo.
 local NaurOLED = {}
@@ -213,7 +431,13 @@ function NaurControls.RegisterGroup(name,group)
         if layout and not group.__naurLayoutWatched then
             group.__naurLayoutWatched=true
             local connection=layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-                if not group.Destroyed and type(group.Resize)=="function" then group:Resize() end
+                if not group.__naurResizePending then
+                    group.__naurResizePending=true
+                    task.defer(function()
+                        group.__naurResizePending=false
+                        if not group.Destroyed and type(group.Resize)=="function" then group:Resize() end
+                    end)
+                end
             end)
             if group.Connections then table.insert(group.Connections,connection) end
         end
@@ -321,13 +545,18 @@ local function makeNaurEnvironment(base)
     local environment = setmetatable({}, { __index = base, __newindex = base })
     local visited = setmetatable({}, { __mode = "k" })
     local activeLibrary
+    local palettePending=setmetatable({}, {__mode="k"})
     local palette = NaurOLED.Palette
     local function applyPalette(library)
         if type(library) ~= "table" or type(library.Scheme) ~= "table" then return end
         for key, value in pairs(palette) do if key ~= "FontFace" then library.Scheme[key] = value end end
         NaurOLED.Apply(library)
-        if type(library.UpdateColorsUsingRegistry) == "function" then
-            library:UpdateColorsUsingRegistry()
+        if type(library.UpdateColorsUsingRegistry) == "function" and not palettePending[library] then
+            palettePending[library]=true
+            task.defer(function()
+                palettePending[library]=nil
+                if not library.Unloaded then library:UpdateColorsUsingRegistry() end
+            end)
         end
     end
     local disabledToggle = { Value = false, Type = "Toggle" }
@@ -417,10 +646,15 @@ local function makeNaurEnvironment(base)
                         if method == "CreateWindow" then
                             NaurOLED.Decorate(result, activeLibrary)
                             NaurControls.Window(result)
+                            NaurScroll.Window(activeLibrary)
                         elseif method == "AddTab" then
                             NaurControls.RegisterTab(originalTabName,result)
+                            NaurScroll.Tab(result,activeLibrary)
+                            if originalTabName=="Home" then NaurSession.Attach(result,activeLibrary,base) end
                         elseif originalGroupName then
                             NaurControls.RegisterGroup(originalGroupName,result)
+                            NaurScroll.Group(result,activeLibrary)
+                            if originalGroupName=="Performance" then NaurFPS.Attach(result,activeLibrary,base) end
                         end
                         if method == "AddTabs" and type(result) == "table" then
                             for _, tab in pairs(result) do wrap(tab) end
