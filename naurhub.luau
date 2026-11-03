@@ -1,8 +1,15 @@
 -- Reutiliza a opção individual; não envia ataques adicionais.
 local NaurBossCycle={controls={},generation=0}
-function NaurBossCycle.Bind(id,control)
+function NaurBossCycle.Bind(id,control,base,library)
  NaurBossCycle.controls[id]=control
  if id=="AutoAllBossesToggle" then
+  -- O script original registra OnChanged depois de criar o controle.
+  -- Este botão pertence ao controlador novo, inclusive nos registros tardios.
+  control.OnChanged=function()end
+  control.RunChanged=function(self)
+   if self.Disabled then return end
+   NaurBossCycle.Start(self.Value,base,library)
+  end
   local setValue=control.SetValue
   control.SetValue=function(self,value,...)
    if value==false and NaurBossCycle.activatingSingle then return end
@@ -25,7 +32,12 @@ function NaurBossCycle.Start(enabled,base,library)
  local generation=NaurBossCycle.generation
  local controls=NaurBossCycle.controls
  local single,selection=controls.AutoBossToggle,controls.BossSelection
- if not single or not selection then return end
+ if not single or not selection then
+  if enabled and library and library.Notify then
+   library:Notify({Title="Naur Hub",Description="Os controles de boss individual ainda não estão disponíveis.",Time=5})
+  end
+  return
+ end
  if NaurBossCycle.saved then
   single:SetValue(false)
   selection:SetValue(NaurBossCycle.saved)
@@ -669,7 +681,7 @@ local function makeNaurEnvironment(base)
                     local prepared=NaurControls.Info(method,id,info)
                     prepared=NaurBossCycle.Prepare(id,prepared,base,activeLibrary)
                     local control=original(self,id,prepared,...)
-                    NaurBossCycle.Bind(id,control)
+                    NaurBossCycle.Bind(id,control,base,activeLibrary)
                     if type(control)=="table" then control.Parent=control.Parent or self end
                     NaurControls.Style(control,id,method)
                     return control
