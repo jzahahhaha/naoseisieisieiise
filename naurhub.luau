@@ -719,9 +719,26 @@ local function __naurRename(value)
  value=string.gsub(value,"TobaHub","NaurHub")
  return value
 end
+local __naurClosureIds=setmetatable({}, {__mode="k"})
+local function __naurStationaryUpvalues(upvalues)
+ local copy={}
+ for index,value in pairs(upvalues) do
+  if type(value)=="function" and __naurClosureIds[value]==47 then
+   copy[index]=function()return false end
+  elseif type(value)=="table" and type(value[1])=="function" and __naurClosureIds[value[1]]==47 then
+   local cell={}
+   for key,item in pairs(value) do cell[key]=item end
+   cell[1]=function()return false end
+   copy[index]=cell
+  else copy[index]=value end
+ end
+ return copy
+end
 by=function(__naurPrototype,__naurUpvalues,__naurEnv,...)
+ if __naurPrototype[0]==50 then __naurUpvalues=__naurStationaryUpvalues(__naurUpvalues) end
  if __naurPrototype[0]==85 or __naurPrototype[0]==101 then return function()end end
  local __naurClosure=__naurOriginalBy(__naurPrototype,__naurUpvalues,__naurEnv,...)
+ __naurClosureIds[__naurClosure]=__naurPrototype[0]
  local __naurConstants=__naurPrototype[6275]
  for __naurIndex,__naurValue in pairs(__naurConstants) do
   local __naurReplacement=__naurRename(__naurValue)
