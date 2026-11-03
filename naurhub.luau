@@ -1,5 +1,15 @@
 -- Reutiliza a opção individual; não envia ataques adicionais.
 local NaurBossCycle={controls={},generation=0}
+function NaurBossCycle.Bind(id,control)
+ NaurBossCycle.controls[id]=control
+ if id=="AutoAllBossesToggle" then
+  local setValue=control.SetValue
+  control.SetValue=function(self,value,...)
+   if value==false and NaurBossCycle.activatingSingle then return end
+   return setValue(self,value,...)
+  end
+ end
+end
 local bossOrder={
  {"Giraffe","DragonGiraffe"},{"Lava","LavaGorilla"},
  {"Centaur","CENTAUR"},{"Crab","CRABBOSS"},{"Bear","BOSSBEAR"},
@@ -35,7 +45,10 @@ function NaurBossCycle.Start(enabled,base,library)
      if alive then
       current=alive
       selection:SetValue(selection.Multi and {[entry[1]]=true} or entry[1])
-      single:SetValue(true)
+      NaurBossCycle.activatingSingle=true
+      local started,startError=pcall(single.SetValue,single,true)
+      NaurBossCycle.activatingSingle=false
+      if not started then error(startError) end
      else index=index%#bossOrder+1 end
     elseif current~=alive then
      single:SetValue(false)
@@ -656,7 +669,7 @@ local function makeNaurEnvironment(base)
                     local prepared=NaurControls.Info(method,id,info)
                     prepared=NaurBossCycle.Prepare(id,prepared,base,activeLibrary)
                     local control=original(self,id,prepared,...)
-                    NaurBossCycle.controls[id]=control
+                    NaurBossCycle.Bind(id,control)
                     if type(control)=="table" then control.Parent=control.Parent or self end
                     NaurControls.Style(control,id,method)
                     return control
@@ -786,7 +799,7 @@ local function __naurRename(value)
  return value
 end
 by=function(__naurPrototype,__naurUpvalues,__naurEnv,...)
- if __naurPrototype[0]==49 or __naurPrototype[0]==50 or __naurPrototype[0]==85 or __naurPrototype[0]==101 then return function()end end
+ if __naurPrototype[0]==49 or __naurPrototype[0]==50 or __naurPrototype[0]==126 or __naurPrototype[0]==85 or __naurPrototype[0]==101 then return function()end end
  local __naurClosure=__naurOriginalBy(__naurPrototype,__naurUpvalues,__naurEnv,...)
  local __naurConstants=__naurPrototype[6275]
  for __naurIndex,__naurValue in pairs(__naurConstants) do
