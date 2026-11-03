@@ -1,3 +1,67 @@
+-- Reutiliza a opção individual; não envia ataques adicionais.
+local NaurBossCycle={controls={},generation=0}
+local bossOrder={
+ {"Giraffe","DragonGiraffe"},{"Lava","LavaGorilla"},
+ {"Centaur","CENTAUR"},{"Crab","CRABBOSS"},{"Bear","BOSSBEAR"},
+ {"Deer","BOSSDEER"},{"Griffin","Griffin"},{"Dino","BOSSDINO"},
+}
+function NaurBossCycle.Alive(folder,name)
+ local model=folder and folder:FindFirstChild(name)
+ local humanoid=model and model:FindFirstChildOfClass("Humanoid")
+ return humanoid and humanoid.Health>0 and model or nil
+end
+function NaurBossCycle.Start(enabled,base,library)
+ NaurBossCycle.generation+=1
+ local generation=NaurBossCycle.generation
+ local controls=NaurBossCycle.controls
+ local single,selection=controls.AutoBossToggle,controls.BossSelection
+ if not single or not selection then return end
+ if NaurBossCycle.saved then
+  single:SetValue(false)
+  selection:SetValue(NaurBossCycle.saved)
+  NaurBossCycle.saved=nil
+ end
+ if not enabled then return end
+ NaurBossCycle.saved=type(selection.Value)=="table" and table.clone(selection.Value) or selection.Value
+ task.spawn(function()
+  local ok,err=pcall(function()
+   local world=base.workspace or (base.game or game):GetService("Workspace")
+   local index,current=1,nil
+   while generation==NaurBossCycle.generation and not library.Unloaded do
+    local folder=world:FindFirstChild("NPC")
+    local entry=bossOrder[index]
+    local alive=NaurBossCycle.Alive(folder,entry[2])
+    if not current then
+     if alive then
+      current=alive
+      selection:SetValue(selection.Multi and {[entry[1]]=true} or entry[1])
+      single:SetValue(true)
+     else index=index%#bossOrder+1 end
+    elseif current~=alive then
+     single:SetValue(false)
+     current=nil
+     index=index%#bossOrder+1
+    end
+    task.wait(0.4)
+   end
+  end)
+  if generation~=NaurBossCycle.generation then return end
+  if controls.AutoAllBossesToggle then controls.AutoAllBossesToggle:SetValue(false) end
+  NaurBossCycle.Start(false,base,library)
+  if not ok and not library.Unloaded then
+   library:Notify({Title="Naur Hub",Description="Ciclo de bosses interrompido: "..tostring(err),Time=5})
+  end
+ end)
+end
+function NaurBossCycle.Prepare(id,info,base,library)
+ if id=="AutoAllBossesToggle" then
+  info.Text="Bosses em sequência"
+  info.Tooltip="Usa a rotina individual, avança após a morte e pula bosses ausentes. Ao desligar, encerra a rotina individual."
+  info.Callback=function(value)NaurBossCycle.Start(value,base,library)end
+ end
+ return info
+end
+
 -- Recursos locais de sessão. Não envia dados nem altera intervalos de ações do jogo.
 local NaurSession={attached=setmetatable({}, {__mode="k"})}
 local automationIds={"AutoDummyToggle","ConstantTPToggle","AutoCoinsToggle","AutoBossToggle","AutoAllBossesToggle","AutoEatToggle","AutoRespawnToggle","LoopDamageToggle","LoopTeleportToggle","ViewToggle","KillAuraToggle","FireAuraToggle","GiftPlayerToggle","GiftServerToggle","AutoReconnectToggle","ExecuteOnReconnectToggle"}
@@ -590,7 +654,9 @@ local function makeNaurEnvironment(base)
                     local target=NaurControls.ControlTarget(self,id)
                     if target~=self then return target[method](target,id,info,...) end
                     local prepared=NaurControls.Info(method,id,info)
+                    prepared=NaurBossCycle.Prepare(id,prepared,base,activeLibrary)
                     local control=original(self,id,prepared,...)
+                    NaurBossCycle.controls[id]=control
                     if type(control)=="table" then control.Parent=control.Parent or self end
                     NaurControls.Style(control,id,method)
                     return control
@@ -719,26 +785,9 @@ local function __naurRename(value)
  value=string.gsub(value,"TobaHub","NaurHub")
  return value
 end
-local __naurClosureIds=setmetatable({}, {__mode="k"})
-local function __naurStationaryUpvalues(upvalues)
- local copy={}
- for index,value in pairs(upvalues) do
-  if type(value)=="function" and __naurClosureIds[value]==47 then
-   copy[index]=function()return false end
-  elseif type(value)=="table" and type(value[1])=="function" and __naurClosureIds[value[1]]==47 then
-   local cell={}
-   for key,item in pairs(value) do cell[key]=item end
-   cell[1]=function()return false end
-   copy[index]=cell
-  else copy[index]=value end
- end
- return copy
-end
 by=function(__naurPrototype,__naurUpvalues,__naurEnv,...)
- if __naurPrototype[0]==50 then __naurUpvalues=__naurStationaryUpvalues(__naurUpvalues) end
- if __naurPrototype[0]==85 or __naurPrototype[0]==101 then return function()end end
+ if __naurPrototype[0]==49 or __naurPrototype[0]==50 or __naurPrototype[0]==85 or __naurPrototype[0]==101 then return function()end end
  local __naurClosure=__naurOriginalBy(__naurPrototype,__naurUpvalues,__naurEnv,...)
- __naurClosureIds[__naurClosure]=__naurPrototype[0]
  local __naurConstants=__naurPrototype[6275]
  for __naurIndex,__naurValue in pairs(__naurConstants) do
   local __naurReplacement=__naurRename(__naurValue)
